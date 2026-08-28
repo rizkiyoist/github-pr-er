@@ -16,7 +16,7 @@ Given branch `feature/something-cool`, it opens:
 ## Install
 
 ```sh
-go build -o github-pr-er.exe .
+go build -o ghprer .
 ```
 
 Put the resulting binary somewhere on your `PATH`.
@@ -26,7 +26,7 @@ Put the resulting binary somewhere on your `PATH`.
 Run it from your feature branch, inside the repo:
 
 ```sh
-github-pr-er
+ghprer
 ```
 
 It will:
