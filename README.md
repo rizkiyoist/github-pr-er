@@ -49,3 +49,37 @@ It will:
 | `--push`       |           | Push the current branch to origin first  |
 | `--only`       |           | Create only one PR: `prod` or `stage`    |
 | `-y`           | `true`    | Skip the confirmation prompt             |
+
+## Example
+
+```
+$ ghprer
+Branch: hotfix/jobdesc-auth
+  PROD  [PROD] Jobdesc Auth  <-  hotfix/jobdesc-auth   base=main
+  STAGE [STAGE] Jobdesc Auth  <-  hotfix/jobdesc-auth   base=develop
+
+Reviewers:
+  0 @copilot
+  1 alice
+  2 bob
+  3 carol
+  4 dave
+  5 erin
+Choose reviewers (comma separated numbers, blank for none): 2,4
+
+==> creating PROD PR (base: main)
+a pull request for branch "hotfix/jobdesc-auth" into branch "main" already exists:
+https://github.com/your-org/your-repo/pull/657
+PROD PR already exists, looking up its URL...
+https://github.com/your-org/your-repo/pull/657
+
+==> creating STAGE PR (base: develop)
+a pull request for branch "hotfix/jobdesc-auth" into branch "develop" already exists:
+https://github.com/your-org/your-repo/pull/658
+STAGE PR already exists, looking up its URL...
+https://github.com/your-org/your-repo/pull/658
+
+Mohon review PR hotfix jobdesc-auth
+https://github.com/your-org/your-repo/pull/658
+https://github.com/your-org/your-repo/pull/657
+```
