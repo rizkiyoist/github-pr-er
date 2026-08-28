@@ -202,7 +202,7 @@ func runCapture(name string, args ...string) (stdout string, stderr string, err 
 // branch into base, used when "gh pr create" reports one already exists.
 func existingPRURL(base, branch string) (string, error) {
 	out, err := exec.Command("gh", "pr", "list",
-		"--head", branch, "--base", base, "--state", "all",
+		"--head", branch, "--base", base, "--state", "open",
 		"--json", "url", "--jq", ".[0].url").Output()
 	if err != nil {
 		return "", err
