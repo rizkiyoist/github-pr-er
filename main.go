@@ -91,8 +91,23 @@ func main() {
 			args = append(args, "--reviewer", strings.Join(reviewers, ","))
 		}
 		fmt.Printf("\n==> creating %s PR (base: %s)\n", s.label, s.base)
-		out, err := runCaptureStdout("gh", args...)
+		out, errOut, err := runCapture("gh", args...)
 		if err != nil {
+			if strings.Contains(errOut, "already exists") {
+				fmt.Printf("%s PR already exists, looking up its URL...\n", s.label)
+				url, lookupErr := existingPRURL(s.base, branch)
+				if lookupErr != nil {
+					fmt.Fprintf(os.Stderr, "could not look up existing %s PR: %v\n", s.label, lookupErr)
+					failures++
+					continue
+				}
+				urls[s.label] = url
+				continue
+			}
+			if strings.Contains(strings.ToLower(errOut), "no commits between") {
+				fmt.Printf("%s PR skipped: no commits between %s and %s\n", s.label, s.base, branch)
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "failed to create %s PR: %v\n", s.label, err)
 			failures++
 			continue
@@ -100,16 +115,18 @@ func main() {
 		urls[s.label] = lastLine(out)
 	}
 
-	if failures > 0 {
-		os.Exit(1)
+	if len(urls) > 0 {
+		fmt.Printf("\nMohon review PR %s\n", strings.ReplaceAll(branch, "/", " "))
+		if u, ok := urls["STAGE"]; ok {
+			fmt.Println(u)
+		}
+		if u, ok := urls["PROD"]; ok {
+			fmt.Println(u)
+		}
 	}
 
-	fmt.Printf("\nMohon review PR %s\n", strings.ReplaceAll(branch, "/", " "))
-	if u, ok := urls["STAGE"]; ok {
-		fmt.Println(u)
-	}
-	if u, ok := urls["PROD"]; ok {
-		fmt.Println(u)
+	if failures > 0 {
+		os.Exit(1)
 	}
 }
 
@@ -165,16 +182,32 @@ func run(name string, args ...string) error {
 	return cmd.Run()
 }
 
-// runCaptureStdout behaves like run but also returns everything written to
-// stdout, while still echoing it to the terminal live.
-func runCaptureStdout(name string, args ...string) (string, error) {
+// runCapture behaves like run but also returns everything written to
+// stdout and stderr, while still echoing both to the terminal live.
+func runCapture(name string, args ...string) (stdout string, stderr string, err error) {
 	cmd := exec.Command(name, args...)
-	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-	cmd.Stderr = os.Stderr
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &outBuf)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &errBuf)
 	cmd.Stdin = os.Stdin
-	err := cmd.Run()
-	return buf.String(), err
+	err = cmd.Run()
+	return outBuf.String(), errBuf.String(), err
+}
+
+// existingPRURL looks up the URL of an already-open pull request from
+// branch into base, used when "gh pr create" reports one already exists.
+func existingPRURL(base, branch string) (string, error) {
+	out, err := exec.Command("gh", "pr", "list",
+		"--head", branch, "--base", base, "--state", "all",
+		"--json", "url", "--jq", ".[0].url").Output()
+	if err != nil {
+		return "", err
+	}
+	url := strings.TrimSpace(string(out))
+	if url == "" {
+		return "", fmt.Errorf("no existing PR found for %s -> %s", branch, base)
+	}
+	return url, nil
 }
 
 func lastLine(s string) string {
