@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -67,7 +66,7 @@ func main() {
 		return
 	}
 
-	reviewers := pickReviewers(stdin, *prodBase, branch)
+	reviewers := pickReviewers(stdin)
 
 	if *push {
 		if err := run("git", "push", "-u", "origin", branch); err != nil {
@@ -100,6 +99,11 @@ func main() {
 					fmt.Fprintf(os.Stderr, "could not look up existing %s PR: %v\n", s.label, lookupErr)
 					failures++
 					continue
+				}
+				if len(reviewers) > 0 {
+					if err := run("gh", "pr", "edit", url, "--add-reviewer", strings.Join(reviewers, ",")); err != nil {
+						fmt.Fprintf(os.Stderr, "could not add reviewers to existing %s PR: %v\n", s.label, err)
+					}
 				}
 				urls[s.label] = url
 				continue
@@ -227,48 +231,20 @@ func fatal(err error) {
 	os.Exit(1)
 }
 
-type codeownersRule struct {
-	pattern string
-	re      *regexp.Regexp
-	owners  []string
-}
-
-var codeownersLocations = []string{
-	"CODEOWNERS",
-	".github/CODEOWNERS",
-	"docs/CODEOWNERS",
-}
-
-// pickReviewers looks for a CODEOWNERS file, matches it against the files
-// changed relative to base, and lets the user interactively pick reviewers
-// from the resulting owner list. Returns nil if there's no CODEOWNERS file,
-// no matching owners, or the user picks none.
-func pickReviewers(reader *bufio.Reader, base, branch string) []string {
-	path := findCodeowners()
-	if path == "" {
-		return nil
-	}
-
-	rules, err := parseCodeowners(path)
+// pickReviewers lists the repo's collaborators (the same people selectable
+// as reviewers in GitHub's own PR UI) and lets the user interactively pick
+// from them. Returns nil if the repo/collaborators can't be determined or
+// the user picks none.
+func pickReviewers(reader *bufio.Reader) []string {
+	candidates, err := reviewCandidates()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not parse %s: %v\n", path, err)
-		return nil
+		fmt.Fprintf(os.Stderr, "warning: could not list reviewers: %v\n", err)
 	}
 
-	files, err := changedFiles(base, branch)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not diff changed files: %v\n", err)
-		return nil
-	}
-
-	owners := ownersForFiles(rules, files)
-	if len(owners) == 0 {
-		return nil
-	}
-
-	fmt.Println("\nPossible reviewers (from " + path + "):")
-	for i, o := range owners {
-		fmt.Printf("  %d %s\n", i+1, o)
+	fmt.Println("\nReviewers:")
+	fmt.Println("  0 @copilot")
+	for i, c := range candidates {
+		fmt.Printf("  %d %s\n", i+1, c)
 	}
 	fmt.Print("Choose reviewers (comma separated numbers, blank for none): ")
 	line, _ := reader.ReadString('\n')
@@ -284,120 +260,46 @@ func pickReviewers(reader *bufio.Reader, base, branch string) []string {
 			continue
 		}
 		n, err := strconv.Atoi(part)
-		if err != nil || n < 1 || n > len(owners) {
+		if err != nil || n < 0 || n > len(candidates) {
 			fmt.Fprintf(os.Stderr, "skipping invalid selection %q\n", part)
 			continue
 		}
-		chosen = append(chosen, owners[n-1])
+		if n == 0 {
+			chosen = append(chosen, "@copilot")
+			continue
+		}
+		chosen = append(chosen, candidates[n-1])
 	}
 	return chosen
 }
 
-func findCodeowners() string {
-	for _, p := range codeownersLocations {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
-// parseCodeowners reads a CODEOWNERS file into ordered pattern/owner rules.
-func parseCodeowners(path string) ([]codeownersRule, error) {
-	data, err := os.ReadFile(path)
+// reviewCandidates returns the current repo's collaborators, excluding the
+// authenticated user (GitHub doesn't allow requesting your own review).
+func reviewCandidates() ([]string, error) {
+	repo, err := exec.Command("gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner").Output()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not determine current repo: %w", err)
 	}
 
-	var rules []codeownersRule
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		re, err := codeownersPatternRegexp(fields[0])
-		if err != nil {
-			continue
-		}
-		rules = append(rules, codeownersRule{pattern: fields[0], re: re, owners: fields[1:]})
-	}
-	return rules, scanner.Err()
-}
-
-// codeownersPatternRegexp translates a CODEOWNERS (gitignore-style) pattern
-// into a regexp that matches repo-relative, forward-slash file paths.
-func codeownersPatternRegexp(pattern string) (*regexp.Regexp, error) {
-	p := pattern
-	anchored := strings.HasPrefix(p, "/")
-	p = strings.TrimPrefix(p, "/")
-	p = strings.TrimSuffix(p, "/")
-	hasSlash := strings.Contains(p, "/")
-
-	var sb strings.Builder
-	sb.WriteString("^")
-	if !anchored && !hasSlash {
-		sb.WriteString("(?:.*/)?")
-	}
-	for i := 0; i < len(p); i++ {
-		c := p[i]
-		switch {
-		case c == '*' && i+1 < len(p) && p[i+1] == '*':
-			sb.WriteString(".*")
-			i++
-		case c == '*':
-			sb.WriteString("[^/]*")
-		case c == '?':
-			sb.WriteString("[^/]")
-		default:
-			sb.WriteString(regexp.QuoteMeta(string(c)))
-		}
-	}
-	sb.WriteString("(?:/.*)?$")
-	return regexp.Compile(sb.String())
-}
-
-// changedFiles lists files that differ between base and branch.
-func changedFiles(base, branch string) ([]string, error) {
-	out, err := exec.Command("git", "diff", "--name-only", base+"..."+branch).Output()
+	me, err := exec.Command("gh", "api", "user", "--jq", ".login").Output()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not determine authenticated user: %w", err)
 	}
-	var files []string
+	myLogin := strings.TrimSpace(string(me))
+
+	out, err := exec.Command("gh", "api", fmt.Sprintf("repos/%s/collaborators", strings.TrimSpace(string(repo))),
+		"--paginate", "--jq", ".[].login").Output()
+	if err != nil {
+		return nil, fmt.Errorf("could not list collaborators: %w", err)
+	}
+
+	var users []string
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		l = strings.TrimSpace(l)
-		if l != "" {
-			files = append(files, l)
+		if l == "" || l == myLogin {
+			continue
 		}
+		users = append(users, l)
 	}
-	return files, nil
-}
-
-// ownersForFiles applies CODEOWNERS rules to each file (last matching rule
-// wins, per GitHub's semantics) and returns the union of owners, in the
-// order they were first encountered, with any leading "@" stripped.
-func ownersForFiles(rules []codeownersRule, files []string) []string {
-	seen := map[string]bool{}
-	var owners []string
-	for _, f := range files {
-		var matched []string
-		for _, r := range rules {
-			if r.re.MatchString(f) {
-				matched = r.owners
-			}
-		}
-		for _, o := range matched {
-			o = strings.TrimPrefix(o, "@")
-			if o == "" || seen[o] {
-				continue
-			}
-			seen[o] = true
-			owners = append(owners, o)
-		}
-	}
-	return owners
+	return users, nil
 }
