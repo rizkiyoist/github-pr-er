@@ -246,11 +246,11 @@ func pickReviewers(reader *bufio.Reader) []string {
 	for i, c := range candidates {
 		fmt.Printf("  %d %s\n", i+1, c)
 	}
-	fmt.Print("Choose reviewers (comma separated numbers, blank for none): ")
+	fmt.Print("Choose reviewers (comma separated numbers, blank for default 0,3,5,7,10): ")
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return nil
+		line = "0,3,5,7,10"
 	}
 
 	var chosen []string
