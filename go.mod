@@ -1,3 +1,3 @@
-module github-pr-er
+module ghprer
 
 go 1.25.4

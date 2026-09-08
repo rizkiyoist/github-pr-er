@@ -1,4 +1,4 @@
-// github-pr-er creates a PROD (-> main) and STAGE (-> develop) pull request
+// ghprer creates a PROD (-> main) and STAGE (-> develop) pull request
 // from the current git branch, titled from the branch name.
 package main
 
